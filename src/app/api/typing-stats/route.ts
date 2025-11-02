@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import TypingStat from "@/models/typingStat";
 import { connectDB } from "@/lib/db";
+import userStat from "@/models/userStat";
 import { getSession } from "@/firebase/firebase-admin";
+import typingStat from "@/models/typingStat";
+import { processTestResult } from "@/lib/gamification";
 
 export async function POST(request: Request) {
   try {
-    // Verify session and extract user info
+    // 1️⃣ Verify session
     const session = await getSession();
     if (!session?.userId) {
       return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
@@ -14,8 +16,9 @@ export async function POST(request: Request) {
     const { userId } = session;
     await connectDB();
 
-    // Parse body
-    const { wpm, accuracy, timePlayed } = await request.json();
+    // 2️⃣ Parse & validate input
+    const body = await request.json();
+    const { wpm, accuracy, timePlayed } = body ?? {};
 
     if (
       typeof wpm !== "number" ||
@@ -28,33 +31,59 @@ export async function POST(request: Request) {
       );
     }
 
-    // Insert new stat
-    const stat = await TypingStat.create({
+    // 3️⃣ Create new typing stat
+    const stat = await typingStat.create({
       userId,
       wordsPerMin: wpm,
       accuracy,
       timePlayed,
     });
 
-    // Asynchronous cleanup: keep only 50 most recent stats per user
-    (async () => {
+    // 4️⃣ Asynchronous cleanup (keep only 50 most recent stats)
+    void (async () => {
       try {
-        const olds = await TypingStat.find({ userId })
-          .sort({ createdAt: 1 })
-          .skip(50)
-          .select("_id");
-        const ids = olds.map((d) => d._id);
-        if (ids.length) {
-          await TypingStat.deleteMany({ _id: { $in: ids } });
+        const count = await typingStat.countDocuments({ userId });
+        if (count > 50) {
+          const excess = count - 50;
+          await typingStat
+            .find({ userId })
+            .sort({ createdAt: 1 })
+            .limit(excess)
+            .deleteMany();
         }
       } catch (cleanupErr) {
-        console.error("Error during typing-stats cleanup:", cleanupErr);
+        console.error("[TypingStat Cleanup Error]:", cleanupErr);
       }
     })();
 
-    return NextResponse.json({ message: "Stat saved", stat }, { status: 201 });
+    // 5️⃣ Update gamification
+    let gamification = {};
+    try {
+      const oldStat = await userStat.findOne({ userId }).select("-__v").lean();
+      const newStat = processTestResult(oldStat ?? {}, wpm);
+      gamification = await userStat.findOneAndUpdate(
+        { userId },
+        { $set: newStat },
+        { upsert: true, new: true }
+      );
+    } catch (err) {
+      console.error("[UserStat Update Error]:", err);
+    }
+
+    // 6️⃣ Return success response
+    return NextResponse.json(
+      {
+        success: true,
+        message: "Stat saved successfully",
+        data: { stat, gamification },
+      },
+      { status: 201 }
+    );
   } catch (error: any) {
-    console.error("Error saving typing stat:", error);
+    console.error("[TypingStat POST Error]:", {
+      message: error.message,
+      stack: error.stack,
+    });
     return NextResponse.json(
       { message: "Internal server error", error: error.message },
       { status: 500 }

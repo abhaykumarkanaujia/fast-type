@@ -1,8 +1,7 @@
 import { ArrowRight, Target, Trophy, Users, Zap } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
 
-export default function About() {
+export default function Intro() {
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <section className="relative overflow-hidden">
