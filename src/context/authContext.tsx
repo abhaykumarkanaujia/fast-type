@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     await signOut(auth);
     try {
-      await fetch("/api/auth/logout", {
+      await fetch("/api/user/logout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
